@@ -7,11 +7,12 @@ MATH 		:= -lm
 
 OPENSSL		:= -l ssl -l crypto
 
-CURL		:= -l curl
-
 # MONGOC 		:= `pkg-config --libs --cflags libmongoc-1.0`
 MONGOC 		:= -l mongoc-1.0 -l bson-1.0
 MONGOC_INC	:= -I /usr/local/include/libbson-1.0 -I /usr/local/include/libmongoc-1.0
+
+CMONGO		:= -l cmongo
+CMONGO_INC	:= -I /usr/local/include/cmongo
 
 HIREDIS		:= -l hiredis
 
@@ -53,7 +54,7 @@ CFLAGS      := $(DEFINES)
 ifeq ($(TYPE), development)
 	CFLAGS += -g -fasynchronous-unwind-tables $(DEVELOPMENT)
 else ifeq ($(TYPE), test)
-	CFLAGS += -g -fasynchronous-unwind-tables -D_FORTIFY_SOURCE=2 -fstack-protector -O2 $(DEVELOPMENT)
+	CFLAGS += -g -fasynchronous-unwind-tables -D_FORTIFY_SOURCE=2 -fstack-protector -O2
 else
 	CFLAGS += -D_FORTIFY_SOURCE=2 -O2
 endif
@@ -68,8 +69,8 @@ endif
 
 CFLAGS += $(COMMON)
 
-LIB         := -L /usr/local/lib $(PTHREAD) $(MATH) $(OPENSSL) $(CURL) $(MONGOC) $(CERVER) $(HIREDIS) $(CREDIS)
-INC         := -I $(INCDIR) -I /usr/local/include $(MONGOC_INC) $(CERVER_INC) $(CREDIS_INC)
+LIB         := -L /usr/local/lib $(PTHREAD) $(MATH) $(OPENSSL) $(MONGOC) $(CERVER) $(CMONGO) $(HIREDIS) $(CREDIS)
+INC         := -I $(INCDIR) -I /usr/local/include $(MONGOC_INC) $(CERVER_INC) $(CMONGO_INC) $(CREDIS_INC)
 INCDEP      := -I $(INCDIR)
 
 SOURCES     := $(shell find $(SRCDIR) -type f -name *.$(SRCEXT))
