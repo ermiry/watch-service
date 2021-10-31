@@ -49,7 +49,7 @@ static void watch_set_service_routes (HttpCerver *http_cerver) {
 	/*** top level route ***/
 
 	// GET /api/watch
-	HttpRoute *main_route = http_route_create (REQUEST_METHOD_GET, "api/", watch_main_handler);
+	HttpRoute *main_route = http_route_create (REQUEST_METHOD_GET, "api/watch", watch_main_handler);
 	http_cerver_route_register (http_cerver, main_route);
 
 	// HEAD /api/watch
@@ -123,6 +123,7 @@ int main (int argc, char const **argv) {
 	// register to the quit signal
 	(void) signal (SIGINT, end);
 	(void) signal (SIGTERM, end);
+	(void) signal (SIGKILL, end);
 
 	// to prevent SIGPIPE when writting to socket
 	(void) signal (SIGPIPE, SIG_IGN);
@@ -138,7 +139,7 @@ int main (int argc, char const **argv) {
 	}
 
 	else {
-		cerver_log_error ("Failed to init watch!");
+		cerver_log_error ("Failed to init service!");
 	}
 
 	service_end ();

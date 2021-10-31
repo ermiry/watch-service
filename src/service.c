@@ -11,10 +11,20 @@
 #include <cerver/utils/log.h>
 #include <cerver/utils/utils.h>
 
+#include <cmongo/mongo.h>
+
+#include <credis/redis.h>
+
 #include "runtime.h"
 #include "service.h"
+#include "worker.h"
+
+#include "models/transaction.h"
 
 #include "controllers/service.h"
+#include "controllers/transactions.h"
+
+bool running = false;
 
 RuntimeType RUNTIME = RUNTIME_TYPE_NONE;
 
@@ -23,6 +33,14 @@ unsigned int PORT = CERVER_DEFAULT_PORT;
 unsigned int CERVER_RECEIVE_BUFFER_SIZE = CERVER_DEFAULT_RECEIVE_BUFFER_SIZE;
 unsigned int CERVER_TH_THREADS = CERVER_DEFAULT_POOL_THREADS;
 unsigned int CERVER_CONNECTION_QUEUE = CERVER_DEFAULT_CONNECTION_QUEUE;
+
+static char MONGO_URI[MONGO_URI_SIZE] = { 0 };
+static char MONGO_APP_NAME[MONGO_APP_NAME_SIZE] = { 0 };
+static char MONGO_DB[MONGO_DB_SIZE] = { 0 };
+
+bool CONNECT_TO_REDIS = false;
+static char REAL_REDIS_HOSTNAME[REDIS_HOSTNAME_SIZE] = { 0 };
+const char *REDIS_HOSTNAME = REAL_REDIS_HOSTNAME;
 
 static void service_env_get_runtime (void) {
 
@@ -114,6 +132,121 @@ static void service_env_get_cerver_connection_queue (void) {
 
 }
 
+static unsigned int service_env_get_mongo_app_name (void) {
+
+	unsigned int retval = 1;
+
+	char *mongo_app_name_env = getenv ("MONGO_APP_NAME");
+	if (mongo_app_name_env) {
+		(void) strncpy (
+			MONGO_APP_NAME,
+			mongo_app_name_env,
+			MONGO_APP_NAME_SIZE - 1
+		);
+
+		retval = 0;
+	}
+
+	else {
+		cerver_log_error ("Failed to get MONGO_APP_NAME from env!");
+	}
+
+	return retval;
+
+}
+
+static unsigned int service_env_get_mongo_db (void) {
+
+	unsigned int retval = 1;
+
+	char *mongo_db_env = getenv ("MONGO_DB");
+	if (mongo_db_env) {
+		(void) strncpy (
+			MONGO_DB,
+			mongo_db_env,
+			MONGO_DB_SIZE - 1
+		);
+
+		retval = 0;
+	}
+
+	else {
+		cerver_log_error ("Failed to get MONGO_DB from env!");
+	}
+
+	return retval;
+
+}
+
+static unsigned int service_env_get_mongo_uri (void) {
+
+	unsigned int retval = 1;
+
+	char *mongo_uri_env = getenv ("MONGO_URI");
+	if (mongo_uri_env) {
+		(void) strncpy (
+			MONGO_URI,
+			mongo_uri_env,
+			MONGO_URI_SIZE - 1
+		);
+
+		retval = 0;
+	}
+
+	else {
+		cerver_log_error ("Failed to get MONGO_URI from env!");
+	}
+
+	return retval;
+
+}
+
+static void service_env_get_connect_to_redis (void) {
+
+	char *connect_to_redis = getenv ("CONNECT_TO_REDIS");
+	if (connect_to_redis) {
+		if (!strcasecmp (connect_to_redis, "TRUE")) {
+			CONNECT_TO_REDIS = true;
+			cerver_log_success ("CONNECT_TO_REDIS -> TRUE");
+		}
+
+		else {
+			CONNECT_TO_REDIS = false;
+			cerver_log_success ("CONNECT_TO_REDIS -> FALSE");
+		}
+	}
+
+	else {
+		cerver_log_warning (
+			"Failed to get CONNECT_TO_REDIS from env - using default FALSE!"
+		);
+	}
+
+}
+
+static unsigned int service_env_get_redis_hostname (void) {
+
+	unsigned int retval = 1;
+
+	char *service_REDIS_HOSTNAME_env = getenv ("REDIS_HOSTNAME");
+	if (service_REDIS_HOSTNAME_env) {
+		(void) strncpy (
+			REAL_REDIS_HOSTNAME,
+			service_REDIS_HOSTNAME_env,
+			REDIS_HOSTNAME_SIZE - 1
+		);
+
+		retval = 0;
+	}
+
+	else {
+		cerver_log_error ("Failed to get REDIS_HOSTNAME from env!");
+	}
+
+	return retval;
+
+}
+
 static unsigned int service_init_env (void) {
 
 	unsigned int errors = 0;
@@ -128,6 +261,75 @@ static unsigned int service_init_env (void) {
 
 	service_env_get_cerver_connection_queue ();
 
+	errors |= service_env_get_mongo_app_name ();
+
+	errors |= service_env_get_mongo_db ();
+
+	errors |= service_env_get_mongo_uri ();
+
+	service_env_get_connect_to_redis ();
+
+	errors |= service_env_get_redis_hostname ();
+
+	return errors;
+
+}
+
+static unsigned int service_mongo_connect (void) {
+
+	unsigned int errors = 0;
+
+	bool connected_to_mongo = false;
+
+	mongo_set_uri (MONGO_URI);
+	mongo_set_app_name (MONGO_APP_NAME);
+	mongo_set_db_name (MONGO_DB);
+
+	if (!mongo_connect ()) {
+		// test mongo connection
+		if (!mongo_ping_db ()) {
+			cerver_log_success ("Connected to Mongo DB!");
+
+			errors |= transactions_model_init ();
+
+			connected_to_mongo = true;
+		}
+	}
+
+	if (!connected_to_mongo) {
+		cerver_log_error ("Failed to connect to mongo!");
+		errors |= 1;
+	}
+
+	return errors;
+
+}
+
+static unsigned int service_redis_init (void) {
+
+	unsigned int errors = 0;
+
+	if (CONNECT_TO_REDIS) {
+		unsigned int result = 1;
+
+		char *hostname = network_hostname_to_ip (REDIS_HOSTNAME);
+		if (hostname) {
+			credis_set_hostname (hostname);
+
+			if (!credis_init ()) {
+				result = credis_ping_db ();
+			}
+			
+			free (hostname);
+		}
+
+		else {
+			cerver_log_error ("Failed to get REDIS_HOSTNAME ip address!");
+		}
+
+		errors = result;
+	}
+
 	return errors;
 
 }
@@ -135,17 +337,50 @@ static unsigned int service_init_env (void) {
 // inits service main values
 unsigned int service_init (void) {
 
-	unsigned int retval = 1;
+	unsigned int retval = 0;
 
 	if (!service_init_env ()) {
-		unsigned int errors = 0;
+		if (!service_mongo_connect ()) {
+			if (!service_redis_init ()) {
+				unsigned int errors = 0;
 
-		errors |= watch_service_init ();
+				cerver_log_debug ("Initializing service...");
 
-		retval = errors;
+				running = true;
+
+				watch_service_init ();
+
+				// service_data_init (FIRST_TIME);
+
+				// service_state_init (FIRST_TIME);
+
+				// load state from cache
+				// if (!FIRST_TIME) {
+				// 	backup_fetch_state_from_cache ();
+				// }
+
+				errors |= service_trans_init ();
+
+				errors |= worker_current_init ();
+
+				retval = errors;
+			}
+		}
 	}
 
 	return retval;
+
+}
+
+static unsigned int service_mongo_end (void) {
+
+	if (mongo_get_status () == MONGO_STATUS_CONNECTED) {
+		transactions_model_end ();
+
+		mongo_disconnect ();
+	}
+
+	return 0;
 
 }
 
@@ -153,6 +388,18 @@ unsigned int service_init (void) {
 unsigned int service_end (void) {
 
 	unsigned int errors = 0;
+
+	running = false;
+
+	(void) sleep (WORKER_WAIT_TIME);
+	
+	worker_current_end ();
+
+	errors |= service_mongo_end ();
+
+	if (CONNECT_TO_REDIS) {
+		(void) credis_end ();
+	}
 
 	watch_service_end ();
 
