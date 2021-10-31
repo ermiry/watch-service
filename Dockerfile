@@ -1,9 +1,10 @@
+ARG CMONGO_VERSION=1.0b-13
 ARG CERVER_VERSION=2.0b-51
 ARG HIREDIS_VERSION=1.0.2
 ARG CREDIS_VERSION=0.5.2
 
-ARG BUILD_DEPS='ca-certificates git libssl-dev libcurl4-openssl-dev'
-ARG RUNTIME_DEPS='ca-certificates libssl-dev libcurl4-openssl-dev'
+ARG BUILD_DEPS='ca-certificates git libssl-dev'
+ARG RUNTIME_DEPS='ca-certificates libssl-dev'
 
 FROM ermiry/mongoc:builder as builder
 
@@ -11,6 +12,14 @@ WORKDIR /opt
 
 ARG BUILD_DEPS
 RUN apt-get --allow-releaseinfo-change update && apt-get install -y ${BUILD_DEPS}
+
+# build cmongo with production flags
+ARG CMONGO_VERSION
+RUN mkdir /opt/cmongo && cd /opt/cmongo \
+    && wget -q --no-check-certificate https://github.com/ermiry-com/cmongo/archive/${CMONGO_VERSION}.zip \
+    && unzip ${CMONGO_VERSION}.zip \
+    && cd cmongo-${CMONGO_VERSION} \
+    && make TYPE=production -j4 && make TYPE=production install
 
 # hiredis
 ARG HIREDIS_VERSION
@@ -48,6 +57,11 @@ FROM ermiry/mongoc:latest
 
 ARG RUNTIME_DEPS
 RUN apt-get update && apt-get install -y ${RUNTIME_DEPS}
+
+# cmongo
+ARG CMONGO_VERSION
+COPY --from=builder /opt/cmongo/cmongo-${CMONGO_VERSION}/bin/libcmongo.so /usr/local/lib/
+COPY --from=builder /opt/cmongo/cmongo-${CMONGO_VERSION}/include/cmongo /usr/local/include/cmongo
 
 # hiredis
 ARG HIREDIS_VERSION
