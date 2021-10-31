@@ -64,9 +64,7 @@ static double worker_handler_method_actual_work (
 
 }
 
-static void worker_handler_method (void *data_ptr) {
-
-	Transaction *trans = (Transaction *) data_ptr;
+static void worker_handler_method (Transaction *trans) {
 
 	double start_time = timer_get_current_time ();
 	double waiting_time = 0;
@@ -124,6 +122,30 @@ static void worker_handler_method (void *data_ptr) {
 
 }
 
+static inline void worker_handler_thread_internal (redisReply *reply) {
+
+	for (size_t idx = 0; idx < reply->elements; idx++) {
+		(void) printf (
+			"[%lu]: %d - %s\n",
+			idx, reply->element[idx]->type, reply->element[idx]->str
+		);
+
+		if (idx) {
+			// do actual work
+			Transaction *trans = service_trans_get_by_id (
+				reply->element[idx]->str
+			);
+
+			if (trans) {
+				worker_handler_method (trans);
+
+				service_trans_return (trans);
+			}
+		}
+	}
+
+}
+
 static void *worker_handler_thread (void *null_ptr) {
 
 	CredisClient *client = NULL;
@@ -143,14 +165,9 @@ static void *worker_handler_thread (void *null_ptr) {
 					"Fetched %lu elements!", reply->elements
 				);
 
-				for (size_t idx = 0; idx < reply->elements; idx++) {
-					(void) printf (
-						"[%lu]: %d - %s\n",
-						idx, reply->element[idx]->type, reply->element[idx]->str
-					);
+				if (reply->elements) {
+					worker_handler_thread_internal (reply);
 				}
-
-				// TODO: do actual work
 
 				freeReplyObject (reply);
 			}
